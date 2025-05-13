@@ -1,0 +1,20 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: figure-aggregator }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: figure-aggregator } }
+  template:
+    metadata: { labels: { app: figure-aggregator } }
+    spec:
+      containers:
+      - name: app
+        image: gcr.io/reciept-scanner-431421/figure-aggregator:latest
+        env:
+          - { name: DB_HOST, value: 104.197.251.24 }
+          - name: DB_USER
+            valueFrom: { secretKeyRef: { name: aggregator-mysql-creds, key: username } }
+          - name: DB_PASS
+            valueFrom: { secretKeyRef: { name: aggregator-mysql-creds, key: password } }
+          - { name: DB_NAME, value: aggregatordb }
+        ports: [{ containerPort: 4000 }]

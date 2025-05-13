@@ -1,123 +1,155 @@
-const puppeteer = require("puppeteer");
+const { launchBrowser } = require('./_browser');
+
+const cleanPrice = txt => (txt || '').replace(/[^\d.]/g, '');
+const resolveImg = el => {
+  const attrs = ['data-src', 'data-lazy-src', 'data-original', 'srcset', 'src'];
+  for (const a of attrs) {
+    let v = el.getAttribute(a);
+    if (!v) continue;
+    if (a === 'srcset') v = v.split(/\s+/)[0];
+    if (!v.startsWith('data:')) return v.startsWith('//') ? `https:${v}` : v;
+  }
+  return '';
+};
+
+function browserExtract(resolveStr, priceFnStr) {
+  const $$ = sel => document.querySelector(sel);
+  const imgFn   = new Function('el', `return (${resolveStr})(el);`);
+  const priceFn = new Function('t',  `return (${priceFnStr})(t);`);
+
+  const arr = [];
+
+  const name =
+    ($$('#shopMainArea h1 span')?.textContent.trim() ||
+     $$('h1 span')?.textContent.trim() ||
+     $$('h1')?.textContent.trim() ||
+     '');
+  arr.push(name);
+
+  const imgEl =
+    document.querySelector('.js-magnifier-0,.js-slick-image') ||
+    document.querySelector('.c-product-main__image img')       ||
+    document.querySelector('#productPhotos img')               ||
+    document.querySelector('img[alt][src]');
+  arr.push(imgEl ? imgFn(imgEl) : '');
+
+  arr.push('TokyoOtakuMode');  
+
+  const priceNode =
+    $$('#shopMainArea .p-price__offscreen') ||
+    $$('#shopMainArea .p-price__price span') ||
+    $$('[itemprop="price"]');
+  arr.push(priceFn(priceNode?.textContent || priceNode?.content || '')); // index 4
+
+  arr.push('');  
+
+  const rel =
+    ($$('#shopMainArea .p-product-detail__release-month a')?.textContent.trim() ||
+     $$('time[itemprop="releaseDate"]')?.textContent.trim() || '');
+  arr.push(rel); 
+
+  return arr;
+}
 
 async function getSTOMlen() {
-    /* 
-    Gets max number of pages from TOM.
-    */
-    const browser = await puppeteer.launch({ args: ['--no-sandbox']})
-    const page = await browser.newPage()
-    page.setDefaultNavigationTimeout(0);
-    await page.goto('https://otakumode.com/search?mode=shop&limit=50&sort=rec&page=1&filter=buyable&category=figures-dolls', { waitUntil: 'networkidle0' })
-    const len = await page.evaluate(() => {
-        return parseInt(document.querySelector('#main > div > div.p-search-result__case.col.s12 > div.u-flex.u-flex-jc-space_between.u-flex-ai-center > ul > li:nth-child(13) > a').innerHTML)
-    })
-    return len
+  const browser = await launchBrowser();
+  const page    = await browser.newPage();
+  page.setDefaultNavigationTimeout(0);
+
+  await page.goto(
+    'https://otakumode.com/shop/new_items?category=figures-dolls',
+    { waitUntil: 'networkidle0' }
+  );
+
+  const len = await page.evaluate(() => {
+    const nums = Array.from(
+      document.querySelectorAll('nav.pagination a, ul.pagination li a')
+    )
+      .map(a => parseInt(a.textContent.trim(), 10))
+      .filter(Boolean);
+    return nums.length ? Math.max(...nums) : 1;
+  });
+
+  await browser.close();
+  return len;
 }
 
 async function scrapeTOM() {
-    /* 
-    Standard scrape of TOM, gets max number of pages and then scrapes products. 
-    */
-    const browser = await puppeteer.launch({ args: ['--no-sandbox'] })
-    const page = await browser.newPage()
-    page.setDefaultNavigationTimeout(0);
-    await page.goto('https://otakumode.com/search?mode=shop&limit=50&sort=rec&page=1&filter=buyable&category=figures-dolls', { waitUntil: 'networkidle0' })
+  const browser = await launchBrowser();
+  const page    = await browser.newPage();
+  page.setDefaultNavigationTimeout(0);
 
-    const len = await page.evaluate(() => {
-        return parseInt(document.querySelector('#main > div > div.p-search-result__case.col.s12 > div.u-flex.u-flex-jc-space_between.u-flex-ai-center > ul > li:nth-child(13) > a').innerHTML)
-    })
-    const allProducts = []
-    //default start 1
-    //replace with len
-    for (let z = 1; z <= len; z++) {
-        console.log(z)
-        await page.goto('https://otakumode.com/search?mode=shop&limit=50&sort=rec&page=' + z.toString() + '&filter=buyable&category=figures-dolls', { waitUntil: 'networkidle0' })
-        const products = await page.evaluate(() => {
-            const collection = document.getElementsByClassName('p-product-list__thumb')
-            const lst = []
-            for (let x = 0; x < collection.length; x++) {
-                lst.push(collection[x].href)
-            }
-            return lst
-        })
+  const totalPages   = await getSTOMlen();
+  const allProducts  = [];
 
-        for (let i = 0; i < products.length; i++) {
-            await page.goto(products[i], { waitUntil: 'networkidle0' })
-            const product = await page.evaluate(() => {
-                const temp = []
-                temp.push(document.querySelector('#shopMainArea > article > div > div.p-product-detail-main > div.p-product-detail__contents.u-flex > div.p-product-detail-main__note > div > h1 > span').innerHTML)
-                temp.push(document.querySelector('.img-responsive.img-responsive--full.js-slick-image.js-magnifier-0').src)
-                temp.push('TokyoOtakuMode')
-                const preorder = document.querySelector('.c-label.c-label--info.c-label--round.c-label--lg')
-                if (preorder != null && preorder.innerHTML != 'Special Order') {
-                    temp.push(document.querySelector('#shopMainArea > article > div > div.p-product-detail-main > div.p-product-detail__contents.u-flex > div.p-product-detail-main__note > div > div:nth-child(4) > div.p-product-detail__sku > div > div:nth-child(1) > div > span.p-price__price > span.p-price__offscreen').innerHTML)
-                    temp.push('')
-                    temp.push(document.querySelector('#shopMainArea > article > div > div.p-product-detail-main > div.p-product-detail__contents.u-flex > div.p-product-detail-main__note > div > div:nth-child(4) > div:nth-child(2) > div > p > span.p-product-detail__release-month > a').innerHTML)
-                }
-                else {
-                    temp.push(document.querySelector('#shopMainArea > article > div > div.p-product-detail-main > div.p-product-detail__contents.u-flex > div.p-product-detail-main__note > div > div:nth-child(4) > div.p-product-detail__sku > div > div:nth-child(1) > div > span.p-price__price > span.p-price__offscreen').innerHTML)
-                    temp.push('')
-                    temp.push('')
-                }
-                return temp
-            })
-            product.splice(3, 0, products[i])
-            console.log(product)
-            allProducts.push(product)
-        }
+  for (let z = 1; z <= totalPages; z++) {
+    console.log(z);   // same as original
+
+    await page.goto(
+      `https://otakumode.com/shop/new_items?category=figures-dolls&page=${z}`,
+      { waitUntil: 'networkidle0' }
+    );
+
+    const productLinks = await page.evaluate(() =>
+      Array.from(
+        document.querySelectorAll(
+          'a.p-product-list__thumb,a.c-product__thumb,a[href*="/products/"]'
+        )
+      ).map(a => a.href)
+    );
+
+    for (const url of productLinks) {
+      await page.goto(url, { waitUntil: 'networkidle0' });
+
+      const product = await page.evaluate(
+        browserExtract,
+        resolveImg.toString(),
+        cleanPrice.toString()
+      );
+      product.splice(3, 0, url); // insert URL at index 3
+
+      console.log(product);      // same as original
+      allProducts.push(product);
     }
-    await browser.close()
-    return allProducts
+  }
+
+  await browser.close();
+  return allProducts;
 }
 
 async function scrapeTOMVari(pageNum) {
-    /* 
-    Scrape number of pages based on input "pageNum".
-    */
-    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox', "--single-process"]})
-    const page = await browser.newPage()
-    page.setDefaultNavigationTimeout(0);
+  const browser = await launchBrowser();
+  const page    = await browser.newPage();
+  page.setDefaultNavigationTimeout(0);
 
-    const allProducts = []
-        await page.goto('https://otakumode.com/search?mode=shop&limit=50&sort=rec&page=' + pageNum + '&filter=buyable&category=figures-dolls', { waitUntil: 'networkidle0' })
-        const products = await page.evaluate(() => {
-            const collection = document.getElementsByClassName('p-product-list__thumb')
-            const lst = []
-            for (let x = 0; x < collection.length; x++) {
-                lst.push(collection[x].href)
-            }
-            return lst
-        })
+  const pageURL =
+    `https://otakumode.com/shop/new_items?category=figures-dolls&page=${pageNum}`;
+  await page.goto(pageURL, { waitUntil: 'networkidle0' });
 
-        for (let i = 0; i < products.length; i++) {
-            await page.goto(products[i], { waitUntil: 'networkidle0' })
-            const product = await page.evaluate(() => {
-                const temp = []
-                temp.push(document.querySelector('#shopMainArea > article > div > div.p-product-detail-main > div.p-product-detail__contents.u-flex > div.p-product-detail-main__note > div > h1 > span').innerHTML)
-                temp.push(document.querySelector('.img-responsive.img-responsive--full.js-slick-image.js-magnifier-0').src)
-                temp.push('TokyoOtakuMode')
-                const preorder = document.querySelector('.c-label.c-label--info.c-label--round.c-label--lg')
-                if (preorder != null && preorder.innerHTML != 'Special Order') {
-                    temp.push(document.querySelector('#shopMainArea > article > div > div.p-product-detail-main > div.p-product-detail__contents.u-flex > div.p-product-detail-main__note > div > div:nth-child(4) > div.p-product-detail__sku > div > div:nth-child(1) > div > span.p-price__price > span.p-price__offscreen').innerHTML)
-                    temp.push('')
-                    temp.push(document.querySelector('#shopMainArea > article > div > div.p-product-detail-main > div.p-product-detail__contents.u-flex > div.p-product-detail-main__note > div > div:nth-child(4) > div:nth-child(2) > div > p > span.p-product-detail__release-month > a').innerHTML)
-                }
-                else {
-                    temp.push(document.querySelector('#shopMainArea > article > div > div.p-product-detail-main > div.p-product-detail__contents.u-flex > div.p-product-detail-main__note > div > div:nth-child(4) > div.p-product-detail__sku > div > div:nth-child(1) > div > span.p-price__price > span.p-price__offscreen').innerHTML)
-                    temp.push('')
-                    temp.push('')
-                }
-                return temp
-            })
-            product.splice(3, 0, products[i])
-            //console.log(product)
-            allProducts.push(product)
-        }
-    
-    await browser.close()
-    return allProducts
+  const productLinks = await page.evaluate(() =>
+    Array.from(
+      document.querySelectorAll(
+        'a.p-product-list__thumb,a.c-product__thumb,a[href*="/products/"]'
+      )
+    ).map(a => a.href)
+  );
+
+  const results = [];
+  for (const url of productLinks) {
+    await page.goto(url, { waitUntil: 'networkidle0' });
+    const product = await page.evaluate(
+      browserExtract,
+      resolveImg.toString(),
+      cleanPrice.toString()
+    );
+    product.splice(3, 0, url);
+    results.push(product);
+  }
+
+  await browser.close();
+  return results;
 }
 
-module.exports = {
-    scrapeTOM, getSTOMlen, scrapeTOMVari
-}
+module.exports = { scrapeTOM, getSTOMlen, scrapeTOMVari };
+
+//scrapeTOM()

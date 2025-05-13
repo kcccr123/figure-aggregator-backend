@@ -1,64 +1,78 @@
-const puppeteer = require("puppeteer");
+// sjsFeatured.js  —  fixed lazy‑load images, logs each item
+const { launchBrowser } = require('./_browser');
+
+function resolveImg(el) {
+  const tryAttrs = ['data-src', 'data-lazy-src', 'data-large_image', 'srcset', 'src'];
+  for (const attr of tryAttrs) {
+    const val = el.getAttribute(attr);
+    if (val) {
+      // srcset → take first URL before whitespace
+      const url = attr === 'srcset' ? val.split(/\s+/)[0] : val;
+      if (!url.startsWith('data:')) {                     // skip 1×1 gif placeholders
+        // add scheme if the URL starts with //
+        return url.startsWith('//') ? `https:${url}` : url;
+      }
+    }
+  }
+  return '';                                             // fallback: empty string
+}
+
+async function extractProduct(page) {
+  return page.evaluate(resolveFn => {
+    const resolveImgInner = new Function('el', `return (${resolveFn})(el);`);
+
+    const $ = sel => document.querySelector(sel);
+
+    const name = $('h1.product-single__title, h1')?.textContent.trim() || '';
+
+    // collect distinct image URLs (ignore duplicates/empty)
+    const imgs = Array.from(
+      document.querySelectorAll('img[data-product-image], .product-gallery__image')
+    )
+      .map(resolveImgInner)
+      .filter((u, i, arr) => u && arr.indexOf(u) === i);
+
+    const images = imgs.join('>>><<<');
+
+    const price = "$" + (() => {
+        const priceSpan = document.querySelector('.product__price .money[data-product-price]');
+        if (!priceSpan) return '';
+        const raw = priceSpan.getAttribute('data-currency-cad') || priceSpan.textContent;
+        return raw.replace(/[^\d.]/g, '');
+      })();
+      
+    const rel = document.querySelector('#template-product > div.product-wrapper > div > div.grid__item.medium-up--one-half.product__information > div > div > div > div.product__details > div:nth-child(3) > div.product-detail__content')
+              ?.textContent.trim() || '';
+
+    return [name, images, 'SolarisJapan', window.location.href, price, rel];
+  }, resolveImg.toString());
+}
 
 async function scrapeSJSFeatured() {
-    /*
-    Gets featured the 5 featured products from SolarisJapan. Meant to be used hourly.
-    */
-    const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] })
-    const page = await browser.newPage()
-    page.setDefaultNavigationTimeout(0);
-    await page.goto('https://solarisjapan.com/', { waitUntil: 'networkidle0' })
+  const browser = await launchBrowser();
+  try {
+    const page = await browser.newPage();
+    await page.goto('https://solarisjapan.com', { waitUntil: 'networkidle0' });
 
-    const allProducts = []
-    const products = await page.evaluate(() => {
-        const collection = document.getElementsByClassName('product-link')
-        const lst = []
-        for (let x = 0; x < 5; x++) {
-            const tuple = []
-            tuple.push(collection[x].href)
-            tuple.push(collection[x].querySelector('.money').innerHTML)
-            lst.push(tuple)
-        }
-        return lst
+    const productLinks = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('a.product-link'))
+        .slice(0, 5)
+        .map(a => a.href)
+    );
 
-    })
-    //console.log(products)
-
-    for (let i = 0; i < products.length; i++) {
-        await page.goto(products[i][0], { waitUntil: 'networkidle0' })
-        const product = await page.evaluate(() => {
-            //console.log('images')
-            const temp = []
-            temp.push(document.querySelector('#template-product > div.product-wrapper > div > div.grid__item.medium-up--one-half.product__information > div > div > div > div.small--hide.tw-flex.tw-justify-between.tw-mb-6 > div > h1').innerHTML)
-            //get images
-            const images = document.getElementsByClassName('fade-in lazyautosizes lazyloaded')
-            var imageStr = images[0].srcset
-            for (var i = 1; i < images.length; i++) {
-                imageStr += ">>><<<" + images[i].srcset
-            }
-            temp.push(imageStr)
-            temp.push('SolarisJapan')
-            const preorder = document.querySelector('.money').innerHTML
-
-            if (preorder != null) {
-                temp.push(preorder)
-            }
-            else {
-                temp.push("empty")
-            }
-            temp.push(document.querySelector('.product__release-date').querySelector('.product__btn-label').innerHTML)
-            return temp
-        })
-        product.splice(3, 0, products[i][0])
-        product.splice(4, 1, products[i][1])
-        //console.log(product)
-        allProducts.push(product)
+    const results = [];
+    for (let i = 0; i < productLinks.length; i++) {
+      await page.goto(productLinks[i], { waitUntil: 'networkidle0' });
+      const data = await extractProduct(page);
+      console.log(`Featured item ${i + 1}:`, data);      // ← log each product
+      results.push(data);
     }
-
-    await browser.close()
-    return allProducts
+    return results;
+  } finally {
+    await browser.close();
+  }
 }
 
-module.exports = {
-    scrapeSJSFeatured
-}
+module.exports = { scrapeSJSFeatured };
+
+//scrapeSJSFeatured()
