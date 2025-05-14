@@ -1,0 +1,7 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: nip-ssl-cert
+spec:
+  domains:
+    - 34.110.244.134.nip.io

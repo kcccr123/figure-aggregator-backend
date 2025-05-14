@@ -34,22 +34,24 @@ const db = mysql.createPool({
   connectionLimit: 10
 });
 
-// pulse check for GCP
+// health check for GCP load balancer
 app.get('/', (_, res) => res.status(200).send('ok'));
 
+// Create a router for all "/figures" endpoints
+const figuresRouter = express.Router();
+
 /**
- * GET /search
+ * GET /figures/search
  * Query products with optional search term, filters, sort, and order.
  */
-app.get('/search', (req, res) => {
+figuresRouter.get('/search', (req, res) => {
   console.log('/search req.query:', req.query);
-
-  const term       = (req.query.query    || '').trim();
-  const filters    = req.query.filters   || '';
-  const sort$      = req.query.sort$;
-  const ordert     = req.query.ordertype;
-  const onlyPre    = req.query.preorder === 'true';   // Pre-Order Only = rel exists
-  const onlyUsed   = req.query.preowned === 'true';   // Pre-Owned Only = preowned exists
+  const term     = (req.query.query || '').trim();
+  const filters  = req.query.filters || '';
+  const sort$    = req.query.sort$;
+  const ordert   = req.query.ordertype;
+  const onlyPre  = req.query.preorder === 'true';
+  const onlyUsed = req.query.preowned === 'true';
 
   let sql = `
     SELECT
@@ -63,60 +65,39 @@ app.get('/search', (req, res) => {
     FROM products p
     JOIN productprices pp ON p.name = pp.name
   `;
-
   const where = [];
 
-  // term search
-  if (term) {
-    where.push(`p.name LIKE ${mysql.escape('%' + term + '%')}`);
-  }
+  if (term) where.push(`p.name LIKE ${mysql.escape('%' + term + '%')}`);
 
   // store filters
-  {
-    const map   = ['SolarisJapan','TokyoOtakuMode'];
-    const sites = [...filters]
-      .map((b,i) => b==='1' ? map[i] : null)
-      .filter(Boolean);
-    if (sites.length) {
-      where.push(`p.website IN (${sites.map(s=>mysql.escape(s)).join(',')})`);
-    }
+  const map   = ['SolarisJapan','TokyoOtakuMode'];
+  const sites = [...filters]
+    .map((b,i) => b === '1' ? map[i] : null)
+    .filter(Boolean);
+  if (sites.length) {
+    where.push(`p.website IN (${sites.map(s => mysql.escape(s)).join(',')})`);
   }
 
-  // order-type flags (upcoming vs released vs in-stock) —
+  // order-type flags
   if (ordert) {
     const ops = [
-      'pp.rel IS NOT NULL',    // has any rel
-      'pp.rel IS NULL',        // no rel
-      'pp.price IS NOT NULL'   // has price
+      'pp.rel IS NOT NULL',
+      'pp.rel IS NULL',
+      'pp.price IS NOT NULL'
     ];
     const picks = [...ordert]
-      .map((b,i) => b==='1'? ops[i]: null)
+      .map((b,i) => b === '1' ? ops[i] : null)
       .filter(Boolean);
-    if (picks.length) {
-      where.push(picks.join(' AND '));
-    }
+    if (picks.length) where.push(picks.join(' AND '));
   }
 
-  // Pre-Order Only: rel exists (not null or empty)
-  if (onlyPre) {
-    where.push("(pp.rel IS NOT NULL AND pp.rel <> '')");
-  }
+  if (onlyPre) where.push("(pp.rel IS NOT NULL AND pp.rel <> '')");
+  if (onlyUsed) where.push("(pp.preowned IS NOT NULL AND pp.preowned <> '')");
 
-  // Pre-Owned Only: preowned exists (not null or empty)
-  if (onlyUsed) {
-    where.push("(pp.preowned IS NOT NULL AND pp.preowned <> '')");
-  }
+  if (where.length) sql += ' WHERE ' + where.join(' AND ');
+  if (sort$ === 'high') sql += ' ORDER BY pp.price DESC';
+  else if (sort$ === 'low') sql += ' ORDER BY pp.price ASC';
 
-  // glue WHERE
-  if (where.length) {
-    sql += ' WHERE ' + where.join(' AND ');
-  }
-
-  // price sorting 
-  if (sort$ === 'high')      sql += ' ORDER BY pp.price DESC';
-  else if (sort$ === 'low')  sql += ' ORDER BY pp.price ASC';
-
-  console.log('/search SQL →', sql);
   db.query(sql, (err, rows) => {
     if (err) {
       console.error('/search error →', err);
@@ -127,13 +108,11 @@ app.get('/search', (req, res) => {
 });
 
 /**
- * GET /numInStore
- * Return count of products for a given store and search term.
+ * GET /figures/numInStore
  */
-app.get('/numInStore', (req, res) => {
+figuresRouter.get('/numInStore', (req, res) => {
   const name = req.query.name?.trim() || '';
   const term = req.query.searchParem?.trim() || '';
-  console.log(term, 'HELLELHEOHOEHLEH')
   let sql = 'SELECT COUNT(*) AS count FROM products p';
   const where = [];
   if (name) where.push(`p.website LIKE ${db.escape('%' + name + '%')}`);
@@ -143,10 +122,9 @@ app.get('/numInStore', (req, res) => {
 });
 
 /**
- * GET /featuredItems
- * Fetch featured items for the specified store.
+ * GET /figures/featuredItems
  */
-app.get('/featuredItems', (req, res) => {
+figuresRouter.get('/featuredItems', (req, res) => {
   const store = req.query.store?.trim() || '';
   const sql = `
     SELECT f.featured_id, p.name, f.images, f.website, f.url,
@@ -157,6 +135,9 @@ app.get('/featuredItems', (req, res) => {
   `;
   db.query(sql, (e, rows) => (e ? res.status(500).send({ error: 'DB error' }) : res.send(rows)));
 });
+
+// Mount the figures router under /figures
+app.use('/figures', figuresRouter);
 
 /**
  * scrapeFeatured
