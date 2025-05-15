@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: master-ingress
+  annotations:
+    kubernetes.io/ingress.global-static-ip-name: "kevin-devops"
+    kubernetes.io/ingress.class: "gce"
+    networking.gke.io/managed-certificates: "nip-ssl-cert"
+spec:
+  rules:
+    - host: 34.110.244.134.nip.io
+      http:
+        paths:
+          - path: /figures
+            pathType: Prefix
+            backend:
+              service:
+                name: figure-aggregator
+                port:
+                  number: 80
+          - path: /receipt-scanner
+            pathType: Prefix
+            backend:
+              service:
+                name: receipt-scanner
+                port:
+                  number: 80

@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: figure-aggregator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: figure-aggregator
+  template:
+    metadata:
+      labels:
+        app: figure-aggregator
+    spec:
+      volumes:
+        - name: cloudsql-instance-credentials
+          secret:
+            secretName: cloudsql-creds
+
+      containers:
+      - name: cloudsql-proxy
+        image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.16.0
+        command:
+          - "/cloud-sql-proxy"
+          - "reciept-scanner-431421:us-central1:figure-sql"
+          - "--credentials-file=/secrets/cloudsql/credentials.json"
+        volumeMounts:
+          - name: cloudsql-instance-credentials
+            mountPath: /secrets/cloudsql
+            readOnly: true
+
+      - name: app
+        image: gcr.io/reciept-scanner-431421/figure-aggregator:latest
+        env:
+          - name: DB_HOST
+            value: "127.0.0.1"
+          - name: DB_USER
+            valueFrom:
+              secretKeyRef:
+                name: aggregator-mysql-creds
+                key: username
+          - name: DB_PASS
+            valueFrom:
+              secretKeyRef:
+                name: aggregator-mysql-creds
+                key: password
+          - name: DB_NAME
+            value: "aggregatordb"
+        ports:
+          - containerPort: 4000
